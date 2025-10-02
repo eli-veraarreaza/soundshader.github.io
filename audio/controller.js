@@ -40,6 +40,11 @@ export class AudioController {
     this.fft_size = fftSize;
     this.offsetMin = 0;
     this.offsetMax = 0;
+    this.minZoomSpan = 0;
+    this.zoomState = null;
+    this.zoomController = null;
+    this.zoomFolder = null;
+    this.zoomInfo = null;
     this.activeAudio = null;
     this.rendererId = 0;
     this.renderers = [];
@@ -81,9 +86,7 @@ export class AudioController {
       let t1 = this.canvasXtoT(initial_pos.x);
       let dt = (t1 - t2) | 0;
       if (Math.abs(dt) < 1) return;
-      this.offsetMin += dt;
-      this.offsetMax += dt;
-      this.drawFrame();
+      this.setOffsetRange(this.offsetMin + dt, this.offsetMax + dt);
     };
 
     this.canvas.onmousemove = e => {
@@ -100,15 +103,11 @@ export class AudioController {
       let t = this.canvasXtoT(e.offsetX);
 
       if (e.ctrlKey && e.shiftKey) {
-        this.offsetMin = 0;
-        this.offsetMax = this.audioSamples.length;
-        this.drawFrame();
+        this.setOffsetRange(0, this.audioSamples.length);
       } else if (e.ctrlKey) {
-        this.offsetMin = t | 0;
-        this.drawFrame();
+        this.setOffsetRange(t | 0, this.offsetMax);
       } else if (e.shiftKey) {
-        this.offsetMax = t | 0;
-        this.drawFrame();
+        this.setOffsetRange(this.offsetMin, t | 0);
       }
     };
 
@@ -118,9 +117,8 @@ export class AudioController {
       let min = this.offsetMin;
       let max = this.offsetMax;
       let mid = (min + max) / 2, len = max - min;
-      this.offsetMin = (mid - len / 2 * zoom) | 0;
-      this.offsetMax = (mid + len / 2 * zoom) | 0;
-      this.drawFrame();
+      let span = len * zoom;
+      this.setOffsetRange(mid - span / 2, mid + span / 2);
     };
   }
 
@@ -212,8 +210,8 @@ export class AudioController {
       log.i('Truncated audio to', fb_size, 'samples');
     }
 
-    this.offsetMin = 0;
-    this.offsetMax = this.audioSamples.length;
+    this.setOffsetRange(0, this.audioSamples.length, { draw: false });
+    this.setupZoomControl();
     this.waveform_fb = new GpuFrameBuffer(this.webgl,
       { size: (fb_size / 4) ** 0.5, channels: 4 });
     this.waveform_fb.upload(this.audioSamples); // send to GPU
@@ -223,6 +221,109 @@ export class AudioController {
       'x', this.audioBuffer.numberOfChannels, 'channels');
 
     this.drawFrame();
+  }
+
+  setOffsetRange(min, max, { draw = true } = {}) {
+    if (!this.audioSamples) return;
+
+    let total = this.audioSamples.length;
+    if (!Number.isFinite(min) || !Number.isFinite(max))
+      return;
+
+    min = Math.round(min);
+    max = Math.round(max);
+
+    if (min > max)
+      [min, max] = [max, min];
+
+    min = Math.max(0, Math.min(min, total));
+    max = Math.max(min + 1, Math.min(max, total));
+
+    this.offsetMin = min;
+    this.offsetMax = max;
+    this.updateZoomDisplay();
+
+    if (draw)
+      this.drawFrame();
+  }
+
+  setupZoomControl() {
+    if (!vargs.gui || !this.audioSamples)
+      return;
+
+    let total = this.audioSamples.length;
+    this.minZoomSpan = Math.max(1, Math.round(this.fft_size / 2));
+    if (!this.zoomState) {
+      this.zoomState = { zoom: 1 };
+      this.zoomFolder = vargs.gui.addFolder('View');
+      this.zoomController = this.zoomFolder
+        .add(this.zoomState, 'zoom', 1, 1)
+        .step(0.01)
+        .name('Zoom (x)');
+      this.zoomController.onChange(value => this.applyZoom(value));
+      this.zoomInfo = { range: '' };
+      this.zoomFolder.add(this.zoomInfo, 'range').name('Muestras').listen();
+      this.zoomFolder.open();
+    }
+
+    let maxZoom = total / this.minZoomSpan;
+    if (!isFinite(maxZoom) || maxZoom < 1)
+      maxZoom = 1;
+
+    this.zoomController.min(1);
+    this.zoomController.max(maxZoom);
+    this.updateZoomDisplay();
+  }
+
+  applyZoom(value) {
+    if (!this.audioSamples || !Number.isFinite(value))
+      return;
+
+    let total = this.audioSamples.length;
+    value = Math.max(1, value);
+    let span = Math.round(total / value);
+    if (span < 1) span = 1;
+    if (span > total) span = total;
+
+    let mid = (this.offsetMin + this.offsetMax) / 2;
+    let min = mid - span / 2;
+    let max = mid + span / 2;
+
+    if (min < 0) {
+      max -= min;
+      min = 0;
+    }
+
+    if (max > total) {
+      min -= (max - total);
+      max = total;
+      if (min < 0) min = 0;
+    }
+
+    this.setOffsetRange(min, max);
+  }
+
+  updateZoomDisplay() {
+    if (!this.zoomController || !this.audioSamples)
+      return;
+
+    let total = this.audioSamples.length;
+    let span = this.offsetMax - this.offsetMin;
+    if (span <= 0) span = 1;
+    let zoom = total / span;
+
+    if (this.zoomController.__max < zoom)
+      this.zoomController.max(zoom);
+
+    this.zoomState.zoom = +zoom.toFixed(2);
+    this.zoomController.updateDisplay();
+    if (this.zoomInfo) {
+      let spanSamples = this.offsetMax - this.offsetMin;
+      let spanSeconds = vconf.SAMPLE_RATE
+        ? spanSamples / vconf.SAMPLE_RATE
+        : 0;
+      this.zoomInfo.range = `${this.offsetMin} – ${this.offsetMax} (Δ ${spanSamples} ≈ ${spanSeconds.toFixed(2)}s)`;
+    }
   }
 
   async stop() {
