@@ -10,7 +10,7 @@ export const vconf = { onchange: null };
 define_arg('IMAGE_SIZE', 'img', 2048, { min: 1, max: 4096, fix: x => 2 ** (log2(x) | 0) });
 define_arg('FFT_SIZE', 'fft', 2048, { min: 1, max: 4096, fix: x => 2 ** (log2(x) | 0) });
 define_arg('SAMPLE_RATE', 'sr', 12000, { min: 3600, max: 48000 });
-define_arg('DB_MAX', 'db_max', 5, { min: 0, max: 100 });
+define_arg('DB_MAX', 'db_max', 100, { min: 0, max: 100 });
 define_arg('DB_LOG', 'db_log', false);
 define_arg('HZ_HUE', 'hue', false);
 define_arg('FREQ_MIN', 'hz_min', 0, { min: 0, max: 3000 });
