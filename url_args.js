@@ -1,6 +1,6 @@
 let q_args = new URLSearchParams(location.search);
 let args_info = [];
-let gui = window.dat && new dat.GUI({ autoPlace: true });
+export const gui = window.dat && new dat.GUI({ autoPlace: true });
 let log2 = Math.log2;
 
 export const vconf = { onchange: null };
